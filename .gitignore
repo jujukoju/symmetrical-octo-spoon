@@ -1,0 +1,58 @@
+# ── Python ─────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.env
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# ── ML Artefacts ────────────────────────────────────────────────────────────
+ml-backend/data/SOCOFing/
+ml-backend/data/processed_png/
+ml-backend/data/metadata/
+ml-backend/reports/
+# Keep model weights if you want to commit them; otherwise add:
+# ml-backend/models/*.pth
+
+# ── Database ────────────────────────────────────────────────────────────────
+*.db
+*.sqlite3
+
+# ── Secrets ────────────────────────────────────────────────────────────────
+.env
+.env.local
+.env.production
+oracle-api/.env
+
+# ── Node / Frontend ─────────────────────────────────────────────────────────
+node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+*.lock
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# ── Blockchain ──────────────────────────────────────────────────────────────
+blockchain/artifacts/
+blockchain/cache/
+blockchain/node_modules/
+
+# ── IDE / OS ────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+
+# ── Logs & coverage ─────────────────────────────────────────────────────────
+*.log
+.coverage
+htmlcov/
+.pytest_cache/
