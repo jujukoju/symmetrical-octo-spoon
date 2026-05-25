@@ -28,12 +28,11 @@ async def test_enroll_success(client, dummy_bmp_bytes, random_nin):
         },
         files={"fingerprint": ("fp.bmp", dummy_bmp_bytes, "image/bmp")},
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 202
     data = resp.json()
-    assert data["nin"]    == random_nin
-    assert data["status"] == "enrolled"
-    assert "request_id"   in data
-    assert "timestamp"    in data
+    assert data["nin"] == random_nin
+    assert "job_id" in data
+    assert "status_url" in data
 
 
 @pytest.mark.asyncio
@@ -53,9 +52,9 @@ async def test_enroll_response_has_request_id_header(client, dummy_bmp_bytes, ra
 
 @pytest.mark.asyncio
 async def test_reenroll_same_nin(client, dummy_bmp_bytes, random_nin):
-    """Second enrolment of the same NIN returns status='re-enrolled'."""
+    """Second enrolment of the same NIN is accepted and increments count."""
     # First enrolment
-    await client.post(
+    resp1 = await client.post(
         "/v1/enroll",
         data={
             "nin": random_nin,
@@ -63,8 +62,16 @@ async def test_reenroll_same_nin(client, dummy_bmp_bytes, random_nin):
         },
         files={"fingerprint": ("fp.bmp", dummy_bmp_bytes, "image/bmp")},
     )
+    assert resp1.status_code == 202
+    job_id1 = resp1.json()["job_id"]
+
+    # Verify first job completed
+    status_resp1 = await client.get(f"/v1/enroll/status/{job_id1}")
+    assert status_resp1.status_code == 200
+    assert status_resp1.json()["status"] == "completed"
+
     # Second enrolment
-    resp = await client.post(
+    resp2 = await client.post(
         "/v1/enroll",
         data={
             "nin": random_nin,
@@ -72,8 +79,13 @@ async def test_reenroll_same_nin(client, dummy_bmp_bytes, random_nin):
         },
         files={"fingerprint": ("fp.bmp", dummy_bmp_bytes, "image/bmp")},
     )
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "re-enrolled"
+    assert resp2.status_code == 202
+    job_id2 = resp2.json()["job_id"]
+
+    # Verify second job completed
+    status_resp2 = await client.get(f"/v1/enroll/status/{job_id2}")
+    assert status_resp2.status_code == 200
+    assert status_resp2.json()["status"] == "completed"
 
 
 # ── NIN validation ────────────────────────────────────────────────────────────

@@ -49,19 +49,14 @@ class EmbeddingExtractor:
         self.preprocessor = PreprocessingPipeline(img_size=(128, 128))
 
     def get_embedding(self, img):
-        # 1. Run the image through the preprocessing pipeline (grayscale, ROI, CLAHE, Gabor, resize)
         processed_img = self.preprocessor.process(img, augment=False)
 
-        # 2. Convert to PyTorch tensor
         tensor = torch.tensor(processed_img, dtype=torch.float32)
 
-        # 3. Reshape to (Batch, Channel, Height, Width) -> (1, 1, 128, 128)
         tensor = tensor.unsqueeze(0).unsqueeze(0)
 
-        # Move to the correct device (CPU/GPU)
         tensor = tensor.to(self.device)
 
-        # 4. Pass to the deep learning model
         with torch.no_grad():
             embedding = self.model.forward_once(tensor)
             

@@ -138,5 +138,5 @@ async def enrolled_nin(client, dummy_bmp_bytes) -> str:
         },
         files={"fingerprint": ("fp.bmp", dummy_bmp_bytes, "image/bmp")},
     )
-    assert resp.status_code == 200, f"Setup enrolment failed: {resp.text}"
+    assert resp.status_code == 202, f"Setup enrolment failed: {resp.text}"
     return nin

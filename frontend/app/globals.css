@@ -1,0 +1,190 @@
+@import "tailwindcss";
+
+@theme {
+  --font-inter: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  --radius: 0.625rem;
+
+  /* ── NIMC Light Theme — Design Tokens ── */
+
+  /* Page background: very light green-tinted white */
+  --background: 120 8% 96%;
+  --foreground: 140 20% 14%;
+  --card: 0 0% 100%;
+  --card-foreground: 140 20% 14%;
+  --primary: 150 100% 21%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 120 10% 92%;
+  --secondary-foreground: 140 20% 20%;
+  --muted: 120 8% 90%;
+  --muted-foreground: 140 15% 45%;
+  --accent: 150 100% 21%;
+  --accent-foreground: 0 0% 100%;
+  --border: 130 12% 82%;
+  --input: 130 12% 82%;
+  --ring: 150 100% 21%;
+
+  /* ── Nigeria green palette ── */
+  --color-green: #006B3F;
+  --color-green-light: #008751;
+  --color-green-lighter: #00A85A;
+  --color-green-dark: #004D2C;
+  --color-green-muted: rgba(0,107,63,0.10);
+
+  /* ── Surface / background tokens ── */
+  --color-surface: #FFFFFF;
+  --color-surface-soft: #F5F7F5;
+  --color-surface-muted: #EBF0EB;
+  --color-surface-border: #D1D9D1;
+
+  /* ── Text tokens ── */
+  --color-ink: #1C2B22;
+  --color-ink-secondary: #3D5240;
+  --color-ink-muted: #6B7F6E;
+  --color-ink-light: #9AAD9C;
+
+  /* ── Dark header/footer/nav band (NIMC style) ── */
+  --color-nimc: #003D24;
+  --color-nimc-mid: #004F2E;
+  --color-nimc-border: #005A35;
+  --color-nimc-text: #C8E6C9;
+
+  /* Legacy aliases — keep gold pointing to green so old refs render correctly */
+  --color-gold: #006B3F;
+  --color-gold-light: #008751;
+  --color-gold-dark: #004D2C;
+
+  /* Legacy charcoal → dark-green band (for old dark-bg references) */
+  --color-charcoal: #003D24;
+  --color-charcoal-light: #004F2E;
+  --color-charcoal-mid: #005A35;
+  --color-charcoal-border: rgba(0,107,63,0.25);
+
+  /* Status colors */
+  --color-status-verified: #10B981;
+  --color-status-pending: #D97706;
+  --color-status-denied: #EF4444;
+  --color-status-active: #2563EB;
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+    border-color: var(--color-surface-border);
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: var(--color-surface-soft);
+    color: var(--color-ink);
+    font-family: var(--font-inter);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    line-height: 1.6;
+  }
+
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--color-surface-muted); }
+  ::-webkit-scrollbar-thumb { background: var(--color-ink-light); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--color-green); }
+}
+
+@layer utilities {
+
+  /* ── Green gradient text ── */
+  .text-green-gradient {
+    background: linear-gradient(135deg, #008751 0%, #006B3F 50%, #004D2C 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Keep gold-gradient alias → same green gradient */
+  .text-gold-gradient {
+    background: linear-gradient(135deg, #008751 0%, #006B3F 50%, #004D2C 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* ── Card surface with subtle shadow ── */
+  .card-surface {
+    background: #ffffff;
+    border: 1px solid var(--color-surface-border);
+    box-shadow: 0 1px 4px rgba(28,43,34,0.06), 0 4px 16px rgba(28,43,34,0.03);
+  }
+
+  /* ── Green glow ── */
+  .green-glow {
+    box-shadow: 0 0 20px rgba(0,107,63,0.15), 0 0 40px rgba(0,107,63,0.06);
+  }
+
+  /* ── Grid background for hero ── */
+  .bg-grid {
+    background-image:
+      linear-gradient(rgba(0, 107, 63, 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 107, 63, 0.04) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  /* ── Shimmer skeleton ── */
+  .shimmer {
+    background: linear-gradient(90deg, #EBF0EB 0%, #F5F7F5 50%, #EBF0EB 100%);
+    background-size: 200% 100%;
+    animation: shimmer 2s linear infinite;
+  }
+
+  /* ── Fingerprint scan frame ── */
+  .fingerprint-scan { position: relative; overflow: hidden; }
+  .fingerprint-scan::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, #006B3F, transparent);
+    animation: scanLine 2s ease-in-out infinite;
+  }
+  @keyframes scanLine {
+    0%   { top: 0%;   opacity: 0; }
+    10%  { opacity: 1; }
+    90%  { opacity: 1; }
+    100% { top: 100%; opacity: 0; }
+  }
+
+  /* ── Layer badge ── */
+  .layer-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  /* ── Pipeline flow connector ── */
+  .pipeline-flow {
+    background: linear-gradient(90deg, transparent, rgba(0,107,63,0.3), transparent);
+    animation: pipelineFlow 1.5s ease-in-out infinite;
+  }
+  @keyframes pipelineFlow {
+    0%   { opacity: 0.2; transform: scaleX(0.6); }
+    50%  { opacity: 1;   transform: scaleX(1); }
+    100% { opacity: 0.2; transform: scaleX(0.6); }
+  }
+
+  /* ── NIN mask ── */
+  .nin-mask { font-family: var(--font-mono); letter-spacing: 0.15em; }
+
+  /* ── Shadow helpers ── */
+  .shadow-card {
+    box-shadow: 0 1px 4px rgba(28,43,34,0.06), 0 4px 16px rgba(28,43,34,0.03);
+  }
+  .shadow-green-sm  { box-shadow: 0 2px 8px rgba(0,107,63,0.12); }
+  .shadow-green-md  { box-shadow: 0 4px 16px rgba(0,107,63,0.18); }
+  .shadow-green-lg  { box-shadow: 0 8px 32px rgba(0,107,63,0.22); }
+}

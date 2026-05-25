@@ -30,7 +30,6 @@ log    = logging.getLogger("oracle_api.health")
     summary="Service health check",
 )
 async def health(db: AsyncSession = Depends(get_db)) -> HealthResponse:
-    # Check database
     db_ok = False
     try:
         await db.execute(text("SELECT 1"))
@@ -38,7 +37,6 @@ async def health(db: AsyncSession = Depends(get_db)) -> HealthResponse:
     except Exception as exc:
         log.warning("Database health check failed: %s", exc)
 
-    # Check model (lazy-loads on first call)
     model_loaded = False
     try:
         get_extractor()

@@ -30,32 +30,26 @@ class FingerprintSiamese(nn.Module):
     def __init__(self, embedding_dim: int = 128, img_size: int = 128):
         super().__init__()
 
-        # ── CNN Backbone ───────────────────────────────────────────────────
-        # Spatial dims after 4× MaxPool2d(2): img_size → img_size // 16
-        # Default: 128 → 64 → 32 → 16 → 8
+        # CNN Backbone
         self.backbone = nn.Sequential(
-            # Block 1: 1 → 32
             nn.Conv2d(1, 32, kernel_size=3, padding=1),
             nn.BatchNorm2d(32),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2),
             nn.Dropout(0.2),
 
-            # Block 2: 32 → 64
             nn.Conv2d(32, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2),
             nn.Dropout(0.3),
 
-            # Block 3: 64 → 128
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
             nn.BatchNorm2d(128),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2),
             nn.Dropout(0.4),
 
-            # Block 4: 128 → 256
             nn.Conv2d(128, 256, kernel_size=3, padding=1),
             nn.BatchNorm2d(256),
             nn.ReLU(inplace=True),

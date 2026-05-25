@@ -100,13 +100,13 @@ async def verify_identity(
     threshold  = VERIFY_THRESHOLD
     start      = time.perf_counter()
 
-    # ── 1. Validate NIN ──────────────────────────────────────────────────────
+    # Validate NIN
     try:
         user_nin = validate_nin(nin)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
-    # ── 2. Validate & decode image ───────────────────────────────────────────
+    # Validate & decode image
     try:
         contents = await fingerprint.read()
         img = validate_image_bytes(contents, fingerprint.content_type or "")

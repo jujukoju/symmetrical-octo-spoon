@@ -53,53 +53,40 @@ class PreprocessingPipeline:
             ToTensorV2(),
         ])
 
-    # ── Modular preprocessing steps ────────────────────────────────────────
+    # Modular preprocessing steps
 
-    def load_image(self, path) -> np.ndarray:
-        """Load an image from disk as a BGR numpy array."""
+    def load_image(self, path):
         img = cv2.imread(str(path))
         if img is None:
             raise ValueError(f"Could not read image: {path}")
         return img
 
-    def to_grayscale(self, img: np.ndarray) -> np.ndarray:
-        """Convert BGR or colour image to grayscale."""
+    def to_grayscale(self, img):
+
         if len(img.shape) == 3:
             img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         return img
 
-    def extract_roi(self, img: np.ndarray) -> np.ndarray:
-        # 1. Convert to float32 for accurate mathematical operations
+    def extract_roi(self, img):
         img_f = img.astype(np.float32)
-        
-        # 2. Calculate local variance ( E[X^2] - (E[X])^2 )
-        # A block size of 11x11 is large enough to span ridge-valley gaps
+
         block_size = (11, 11)
         mu = cv2.blur(img_f, block_size)
         mu_sq = cv2.blur(img_f**2, block_size)
         variance = mu_sq - mu**2
-        
-        # 3. Normalize the variance map to standard 8-bit image format (0-255)
+
         variance = cv2.normalize(variance, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-        
-        # 4. Soft Thresholding
-        # Any texture (variance > 15) is kept. This low threshold ensures 
-        # faint ridges from worn-down prints are protected.
+
         _, thresh = cv2.threshold(variance, 15, 255, cv2.THRESH_BINARY)
-        
-        # 5. Morphological Closing
-        # Worn-down prints might have "holes" in the variance map. 
-        # Closing bridges these gaps to create one unified solid shape.
+
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (25, 25))
         closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-        
-        # 6. Find the bounding box of the largest texture blob
+
         contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if contours:
             largest = max(contours, key=cv2.contourArea)
             x, y, w, h = cv2.boundingRect(largest)
-            
-            # Add a 5-pixel safety buffer around the crop to avoid cutting the edges
+
             x1, y1 = max(0, x - 5), max(0, y - 5)
             x2, y2 = min(img.shape[1], x + w + 5), min(img.shape[0], y + h + 5)
             
