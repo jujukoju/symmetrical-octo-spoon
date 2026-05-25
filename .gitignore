@@ -28,7 +28,7 @@ ml-backend/reports/
 .env
 .env.local
 .env.production
-oracle-api/.env
+oracle_api/.env
 
 # ── Node / Frontend ─────────────────────────────────────────────────────────
 node_modules/

@@ -163,6 +163,13 @@ def check_model_file() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main() -> int:
+    if sys.platform.startswith("win"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except AttributeError:
+            import io
+            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+
     print(f"\n{BOLD}NINAuth — Environment Sanity Check{RESET}")
     print("=" * 60)
 

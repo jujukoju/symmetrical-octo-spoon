@@ -51,7 +51,7 @@ vec  = enc.decrypt_vector(blob)                # → float32 ndarray (128,)
 
 ### Running the API
 ```bash
-cd oracle-api/
+cd oracle_api/
 pip install -r requirements.txt
 uvicorn main:app --reload --port 8001
 
@@ -73,7 +73,7 @@ uvicorn main:app --reload --port 8001
 ## 5.4 Integration Tests
 
 ```bash
-cd oracle-api/
+cd oracle_api/
 pytest tests/ -v --tb=short
 ```
 

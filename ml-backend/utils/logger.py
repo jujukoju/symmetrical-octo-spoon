@@ -36,7 +36,7 @@ def get_logger(
     Return a configured logger.
 
     Args:
-        name:        Logger name (e.g. 'train', 'oracle-api.enroll').
+        name:        Logger name (e.g. 'train', 'oracle_api.enroll').
         level:       Log level (default INFO).
         log_file:    Optional path to write logs to a file.
         json_format: If True, emit JSON-structured log lines.

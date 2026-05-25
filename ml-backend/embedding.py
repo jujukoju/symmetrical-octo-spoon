@@ -10,6 +10,7 @@ Usage:
     # embedding.shape == (128,), dtype float32, L2-normalised
 """
 
+import cv2  # <--- NEW: Added cv2 import!
 import numpy as np
 import torch
 from pathlib import Path
@@ -23,7 +24,7 @@ class EmbeddingExtractor:
     Loads a trained FingerprintSiamese model and extracts 128-D embeddings.
 
     The same instance is reused across the FastAPI service so the model
-    is loaded only once (via dependency injection in oracle-api).
+    is loaded only once (via dependency injection in oracle_api).
 
     Args:
         model_path:    Path to saved .pth state dict.
@@ -47,32 +48,21 @@ class EmbeddingExtractor:
 
         self.preprocessor = PreprocessingPipeline(img_size=(128, 128))
 
-    def get_embedding(self, image_path_or_array) -> np.ndarray:
-        """
-        Extract a 128-D L2-normalised embedding vector.
+    def get_embedding(self, img):
+        # 1. Run the image through the preprocessing pipeline (grayscale, ROI, CLAHE, Gabor, resize)
+        processed_img = self.preprocessor.process(img, augment=False)
 
-        Args:
-            image_path_or_array: File path (str/Path) OR pre-loaded numpy array.
-                If a path, the image is loaded and fully preprocessed.
-                If an array, it is assumed to already be preprocessed (float32, H×W).
+        # 2. Convert to PyTorch tensor
+        tensor = torch.tensor(processed_img, dtype=torch.float32)
 
-        Returns:
-            1-D float32 numpy array of shape (128,), L2-normalised.
-        """
-        if isinstance(image_path_or_array, (str, Path)):
-            raw = self.preprocessor.load_image(image_path_or_array)
-            processed = self.preprocessor.process(raw, augment=False)
-        else:
-            processed = image_path_or_array   # assume already preprocessed
+        # 3. Reshape to (Batch, Channel, Height, Width) -> (1, 1, 128, 128)
+        tensor = tensor.unsqueeze(0).unsqueeze(0)
 
-        # Ensure shape is (1, H, W)
-        if processed.ndim == 2:
-            processed = np.expand_dims(processed, axis=0)
+        # Move to the correct device (CPU/GPU)
+        tensor = tensor.to(self.device)
 
-        # Add batch dimension → (1, 1, H, W)
-        tensor = torch.from_numpy(processed).unsqueeze(0).float().to(self.device)
-
+        # 4. Pass to the deep learning model
         with torch.no_grad():
-            embedding = self.model.forward_once(tensor)  # (1, 128)
-
-        return embedding.cpu().numpy()[0]  # (128,)
+            embedding = self.model.forward_once(tensor)
+            
+        return embedding.cpu().numpy().flatten()

@@ -81,7 +81,7 @@ python evaluate.py
 
 ### 7. Run the API
 ```bash
-cd oracle-api/
+cd oracle_api/
 pip install -r requirements.txt
 uvicorn main:app --reload --port 8001
 # Swagger docs → http://localhost:8001/docs
@@ -89,7 +89,7 @@ uvicorn main:app --reload --port 8001
 
 ### 8. Run integration tests
 ```bash
-cd oracle-api/
+cd oracle_api/
 pytest tests/ -v
 ```
 
@@ -100,8 +100,8 @@ pytest tests/ -v
 make sanity   # run check_env.py
 make train    # cd ml-backend && python train.py
 make eval     # cd ml-backend && python evaluate.py
-make api      # cd oracle-api && uvicorn main:app --reload --port 8001
-make test     # cd oracle-api && pytest tests/ -v
+make api      # cd oracle_api && uvicorn main:app --reload --port 8001
+make test     # cd oracle_api && pytest tests/ -v
 ```
 
 ---
