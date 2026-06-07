@@ -40,15 +40,15 @@ EMBEDDING_DIM = 128
 
 # ── Training ───────────────────────────────────────────────────────────────
 LEARNING_RATE   = 1e-3
-BATCH_SIZE      = 32
+BATCH_SIZE      = 16
 NUM_EPOCHS      = 50
 MARGIN          = 1.0         # contrastive loss margin
 POS_NEG_RATIO   = 1.0         # positive : negative pair balance
 EARLY_STOP_PATIENCE = 8
 LR_PATIENCE     = 5           # ReduceLROnPlateau patience
 # Windows multiprocessing note: set NUM_WORKERS=0 to avoid spawn issues
-NUM_WORKERS     = int(os.getenv("NUM_WORKERS", "0"))
-PIN_MEMORY      = True
+NUM_WORKERS     = 0
+PIN_MEMORY      = False
 
 # ── Split Ratios ───────────────────────────────────────────────────────────
 SPLIT = {

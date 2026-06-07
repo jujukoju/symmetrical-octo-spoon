@@ -1,6 +1,4 @@
 """
-oracle_api/middleware/request_id.py
-------------------------------------
 Starlette middleware that attaches a unique X-Request-ID to every request
 and propagates it in the response headers.
 

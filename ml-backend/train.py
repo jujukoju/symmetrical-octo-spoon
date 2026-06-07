@@ -1,16 +1,3 @@
-"""
-train.py
---------
-Keras-style training script for the Siamese fingerprint verification model.
-
-Features:
-  - Consumes SiamesePairDataset (pair generators with 1:1 pos:neg ratio).
-  - Logs train/val loss and a verification-accuracy proxy each epoch.
-  - Saves best model weights (lowest val loss) via early stopping.
-  - Uses ReduceLROnPlateau scheduler.
-  - All hyper-parameters loaded from config.py.
-"""
-
 import json
 import logging
 import torch
@@ -105,7 +92,10 @@ def train() -> None:
     model = FingerprintSiamese(embedding_dim=EMBEDDING_DIM).to(device)
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=LR_PATIENCE, verbose=True
+        optimizer, 
+        mode="min", 
+        factor=0.5, 
+        patience=LR_PATIENCE
     )
 
     MODEL_SAVE_DIR.mkdir(parents=True, exist_ok=True)

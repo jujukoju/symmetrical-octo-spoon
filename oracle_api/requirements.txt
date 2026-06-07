@@ -9,6 +9,7 @@ uvicorn[standard]>=0.24.0       # includes uvloop + httptools for performance
 python-multipart>=0.0.6         # required for UploadFile / Form support
 
 # ── Database (async) ───────────────────────────────────────────────────────────
+httpx>=0.24.0
 sqlalchemy[asyncio]>=2.0.0
 aiosqlite>=0.19.0               # SQLite async driver (dev/CI/tests)
 asyncpg>=0.29.0                 # PostgreSQL async driver (production)

@@ -1,43 +1,47 @@
+# oracle_api/routes/verify.py
 """
 oracle_api/routes/verify.py
 ----------------------------
-POST /v1/verify — Biometric verification endpoint.
+POST /v1/verify — Production-Grade Decentralized Biometric Verification Endpoint.
 
 Flow:
-  1. Validate NIN (11 digits).
-  2. Validate uploaded fingerprint image.
-  3. Fetch enrolled record from the database.
-  4. Decrypt the stored embedding with AES-256-GCM.
-  5. Extract a live embedding from the uploaded fingerprint (thread pool).
-  6. Compute cosine similarity and distance between live vs stored embeddings.
-  7. Apply threshold → MATCH or NO_MATCH decision.
-  8. Write audit log and Prometheus metrics.
-  9. Return VerifyResponse.
+  1. Validate incoming NIN and fingerprint image formatting.
+  2. Compute salted SHA-256 hash of the NIN to create the on-chain identifier key.
+  3. Query Sepolia via the smart contract layer to look up the identity's mapped IPFS CID.
+  4. Fetch the target encrypted base64 template directly from the IPFS gateway node.
+  5. Decrypt the biometric template using AES-256-GCM authenticated decryption.
+  6. Extract the live 128-D embedding from the incoming scan using the model thread pool.
+  7. Measure cosine similarity and evaluate distances against the security threshold.
+  8. Log metrics, append data to audit tables, and return the structured response.
 """
 
 import logging
 import os
 import time
 import uuid
+import hashlib
 from datetime import datetime, timezone
 
 import numpy as np
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import verify_api_key
 from config import VERIFY_THRESHOLD
 from crypto import BiometricEncryptor
-from db_models import AuditLog, Enrollment
+from db_models import AuditLog
 from dependencies import get_db, get_extractor
 from inference_pool import run_in_thread
 from metrics import verification_decision, verification_error, verification_latency
 from schemas import VerifyResponse
 from validators import validate_image_bytes, validate_nin
+from blockchain import get_ipfs_cid_from_blockchain   # Refactored smart contract read-call
+from ipfs import fetch_from_ipfs                       # Custom IPFS data retrieval module
 
 router = APIRouter(tags=["Verification"])
 log    = logging.getLogger("oracle_api.verify")
+
+NIN_PEPPER = os.getenv("NIN_SECRET_PEPPER", "default_government_secure_salt_value")
 
 
 def _cosine_distance(a: np.ndarray, b: np.ndarray) -> tuple[float, float]:
@@ -83,8 +87,8 @@ async def _write_audit(
     summary="Verify a citizen fingerprint against the enrolled template",
     description=(
         "Accepts an 11-digit NIN and a live fingerprint image. "
-        "Compares the live embedding to the stored encrypted template using cosine distance. "
-        "Returns MATCH if distance ≤ threshold, otherwise NO_MATCH."
+        "Queries smart contracts for the IPFS CID matching the hashed NIN, fetches and "
+        "decrypts the template payload, and measures live similarity distance matches."
     ),
 )
 async def verify_identity(
@@ -100,13 +104,13 @@ async def verify_identity(
     threshold  = VERIFY_THRESHOLD
     start      = time.perf_counter()
 
-    # Validate NIN
+    # Validate incoming parameter constraints
     try:
         user_nin = validate_nin(nin)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
-    # Validate & decode image
+    # Validate image file bytes
     try:
         contents = await fingerprint.read()
         img = validate_image_bytes(contents, fingerprint.content_type or "")
@@ -117,50 +121,65 @@ async def verify_identity(
         raise HTTPException(status_code=422, detail=str(exc))
 
     try:
-        # ── 3. Fetch enrollment ───────────────────────────────────────────────
-        stmt = select(Enrollment).where(Enrollment.nin == user_nin)
-        result = await db.execute(stmt)
-        enrollment = result.scalar_one_or_none()
+        # ── 3. Fetch IPFS CID Pointer from Sepolia ────────────────────────────
+        # Compute salted NIN hash matching the background task enrollment hashing algorithm
+        salted_input = user_nin + NIN_PEPPER
+        nin_hash = hashlib.sha256(salted_input.encode('utf-8')).hexdigest()
+        
+        # Read the active CID string pointer from your smart contract's storage mappings
+        ipfs_cid = await get_ipfs_cid_from_blockchain(nin_hash)
 
-        if not enrollment:
+        if not ipfs_cid or ipfs_cid.strip() == "":
             await _write_audit(db, request_id, user_nin, "verify", ip_address,
                                success=False, error_detail="not_enrolled")
-            raise HTTPException(status_code=404, detail="NIN is not enrolled.")
+            raise HTTPException(status_code=404, detail="Identity registry mapping not found on-chain.")
 
-        if not enrollment.encrypted_embedding:
+        # ── 4. Retrieve Storage Payload from IPFS Node ───────────────────────
+        try:
+            encrypted_b64 = await fetch_from_ipfs(ipfs_cid)
+        except Exception as exc:
+            log.error("IPFS network fetch timeout using CID %s: %s", ipfs_cid, exc)
+            raise HTTPException(status_code=502, detail="Decentralized file system retrieval failure.")
+
+        if not encrypted_b64:
             await _write_audit(db, request_id, user_nin, "verify", ip_address,
                                success=False, error_detail="no_biometric_template")
             raise HTTPException(
                 status_code=422,
-                detail="No fingerprint template on file for this NIN. Please re-enrol.",
+                detail="Biometric fingerprint template file payload missing on IPFS node.",
             )
 
-        # ── 4. Decrypt stored embedding ───────────────────────────────────────
-        encryptor      = BiometricEncryptor()
-        stored_embedding = encryptor.decrypt_vector(enrollment.encrypted_embedding)
+        # ── 5. Decrypt Stored Biometric Embedding ────────────────────────────
+        encryptor = BiometricEncryptor()
+        try:
+            # Reconstruct template matrix using system master key parameters
+            stored_embedding = encryptor.decrypt_vector(encrypted_b64)
+        except Exception as exc:
+            log.error("AES-256-GCM authentication decryption structural crash: %s", exc)
+            raise HTTPException(status_code=500, detail="Biometric template parsing failure.")
 
-        # ── 5. Extract live embedding (thread pool) ───────────────────────────
-        extractor      = get_extractor()
+        # ── 6. Extract Live Embedding Vector (Inference Thread Pool) ──────────
+        extractor = get_extractor()
         live_embedding = await run_in_thread(extractor.get_embedding, img)
 
-        # ── 6. Compute cosine distance ────────────────────────────────────────
+        # ── 7. Evaluate Cosine Distances and Match Thresholds ──────────────────
         similarity, distance = _cosine_distance(live_embedding, stored_embedding)
         dec = "MATCH" if distance <= threshold else "NO_MATCH"
 
-        # ── 7. Record latency & decision ──────────────────────────────────────
+        # ── 8. Process Performance Metrics & Latency Tracking ──────────────────
         elapsed = time.perf_counter() - start
         verification_latency.observe(elapsed)
         verification_decision.labels(decision=dec).inc()
 
-        # ── 8. Audit log ──────────────────────────────────────────────────────
+        # Commit updates to local relational audit trail logs
         await _write_audit(
             db, request_id, user_nin, "verify", ip_address,
             success=True, decision=dec, distance=distance,
         )
 
         log.info(
-            "Verify NIN=%s decision=%s dist=%.4f threshold=%.4f request_id=%s",
-            user_nin, dec, distance, threshold, request_id,
+            "Verify NIN=%s decision=%s dist=%.4f threshold=%.4f request_id=%s cid=%s",
+            user_nin, dec, distance, threshold, request_id, ipfs_cid,
         )
 
         return VerifyResponse(
@@ -177,7 +196,7 @@ async def verify_identity(
         raise
     except Exception as exc:
         verification_error.labels(reason="internal_error").inc()
-        log.error("Verification failed request_id=%s: %s", request_id, exc, exc_info=True)
+        log.error("Verification system exception on request_id=%s: %s", request_id, exc, exc_info=True)
         await _write_audit(db, request_id, user_nin, "verify", ip_address,
                            success=False, error_detail="internal_error")
-        raise HTTPException(status_code=500, detail="Verification failed. Please try again.")
+        raise HTTPException(status_code=500, detail="Verification endpoint execution error.")

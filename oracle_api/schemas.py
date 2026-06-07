@@ -10,9 +10,6 @@ accurate OpenAPI documentation.
 from datetime import datetime
 from pydantic import BaseModel, Field
 
-
-# ── Enrolment ─────────────────────────────────────────────────────────────────
-
 class EnrollResponse(BaseModel):
     """Response returned by POST /v1/enroll."""
     nin: str       = Field(..., description="11-digit Nigerian NIN")
@@ -28,9 +25,6 @@ class EnrollResponse(BaseModel):
             "timestamp": "2026-05-19T20:00:00+00:00",
         }
     }}
-
-
-# ── Verification ──────────────────────────────────────────────────────────────
 
 class VerifyResponse(BaseModel):
     """Response returned by POST /v1/verify."""
@@ -53,9 +47,6 @@ class VerifyResponse(BaseModel):
             "timestamp": "2026-05-19T20:00:01+00:00",
         }
     }}
-
-
-# ── Health ────────────────────────────────────────────────────────────────────
 
 class HealthResponse(BaseModel):
     """Response returned by GET /health."""

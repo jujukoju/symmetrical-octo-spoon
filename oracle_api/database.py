@@ -41,11 +41,3 @@ class Base(DeclarativeBase):
     """Shared declarative base for all ORM models."""
     pass
 
-
-async def create_all_tables() -> None:
-    """Create all tables if they do not already exist (development / SQLite)."""
-    from db_models import AuditLog, Enrollment  # noqa: F401 — register models
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    log.info("Database tables created/verified.")

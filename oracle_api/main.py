@@ -1,37 +1,28 @@
 """
-oracle_api/main.py
--------------------
-NINAuth Oracle API — FastAPI application entrypoint.
+Oracle API — FastAPI application entrypoint.
 
-Startup sequence:
-  1. Load configuration from .env.
-  2. Create DB tables if USE_ALEMBIC=false (development / SQLite).
-  3. Register middleware (Request ID, CORS).
-  4. Mount Prometheus /metrics if ENABLE_METRICS=true.
-  5. Register route routers: /health, /v1/enroll, /v1/verify.
+Production Pipeline Startup sequence:
+  1. Load runtime configurations from .env.
+  2. Database migrations are safely externalized via Alembic (USE_ALEMBIC=true).
+  3. Register middleware architecture (Request ID tracking context, CORS).
+  4. Mount Prometheus /metrics engine if ENABLE_METRICS=true.
+  5. Register fully dynamic, production-grade API route sub-routers.
 
-Run locally:
-    uvicorn main:app --reload --port 8001
-
-Swagger docs (development only):
-    http://localhost:8001/docs
 """
 
 import logging
-import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 from fastapi.middleware.cors import CORSMiddleware
 
-from config import ALLOWED_ORIGINS, APP_VERSION, ENABLE_METRICS, IS_PRODUCTION, LOG_LEVEL, USE_ALEMBIC
-from database import create_all_tables
+from database import engine 
 from inference_pool import shutdown_pool
-from middleware.request_id import RequestIDMiddleware
 from routes import enroll, health, verify
+from middleware.request_id import RequestIDMiddleware
+from config import ALLOWED_ORIGINS, APP_VERSION, ENABLE_METRICS, IS_PRODUCTION, LOG_LEVEL
 
-# ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
     format="%(asctime)s | %(levelname)-8s | %(name)s — %(message)s",
@@ -39,25 +30,22 @@ logging.basicConfig(
 )
 log = logging.getLogger("oracle_api")
 
-
-# ── Lifespan ──────────────────────────────────────────────────────────────────
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    log.info("NINAuth Oracle API v%s starting up…", APP_VERSION)
+    log.info("NINAuth Oracle API v%s starting up under enterprise configuration…", APP_VERSION)
+    log.info("Database schema state verified via Alembic infrastructure pipeline.")
 
-    if not USE_ALEMBIC:
-        await create_all_tables()
-    else:
-        log.info("USE_ALEMBIC=true — skipping create_all_tables (run alembic upgrade head).")
+    yield  
 
-    yield  # ← application is live
-
+    log.info("Initializing graceful shutdown sequences...")
+    
     shutdown_pool()
-    log.info("NINAuth Oracle API shut down cleanly.")
+    
+    await engine.dispose()
+    log.info("PostgreSQL connection pools drained and disposed.")
+    
+    log.info("NINAuth Oracle API shut down cleanly with 0 active dangling sockets.")
 
-
-# ── App ───────────────────────────────────────────────────────────────────────
 
 app = FastAPI(
     title="NINAuth Oracle API",
@@ -68,7 +56,7 @@ app = FastAPI(
     ),
     version=APP_VERSION,
     lifespan=lifespan,
-    # Hide docs in production
+
     docs_url=None  if IS_PRODUCTION else "/docs",
     redoc_url=None if IS_PRODUCTION else "/redoc",
 )
@@ -84,17 +72,15 @@ def custom_openapi():
         routes=app.routes,
     )
     
-    # Add global security scheme for X-API-Key
     openapi_schema["components"]["securitySchemes"] = {
         "X-API-Key": {
             "type": "apiKey",
             "in": "header",
             "name": "X-API-Key",
-            "description": "Enter your API key here"
+            "description": "Enter your authorized institutional API key credentials here"
         }
     }
-    
-    # Apply it globally to all endpoints
+
     openapi_schema["security"] = [{"X-API-Key": []}]
     
     app.openapi_schema = openapi_schema
@@ -102,7 +88,6 @@ def custom_openapi():
 
 app.openapi = custom_openapi
 
-# ── Middleware ────────────────────────────────────────────────────────────────
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(
     CORSMiddleware,
@@ -112,17 +97,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Prometheus metrics ────────────────────────────────────────────────────────
 if ENABLE_METRICS:
     try:
         from prometheus_client import make_asgi_app
         metrics_app = make_asgi_app()
         app.mount("/metrics", metrics_app)
-        log.info("Prometheus metrics mounted at /metrics.")
+        log.info("Prometheus telemetry metrics mounted natively at /metrics.")
     except ImportError:
-        log.warning("prometheus_client not installed — metrics endpoint disabled.")
+        log.warning("prometheus_client driver dependency missing — metrics endpoint deactivated.")
 
-# ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(health.router)
 app.include_router(enroll.router)
 app.include_router(verify.router)

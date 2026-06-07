@@ -1,27 +1,13 @@
 """
-oracle_api/auth.py
-------------------
 API key authentication for the NINAuth Oracle API.
-
-How it works:
-  - API consumers receive a plaintext key (e.g. from `make gen-key`).
-  - This service stores only the SHA-256 hash of each valid key.
-  - On each request the incoming key is hashed and compared to stored hashes.
-  - Keys are read from env vars: API_KEY_HASH_1, API_KEY_HASH_2, ...
-
-Key generation:
-    python auth.py --generate
-    # Prints both the plaintext key and its hash.
-    # Add the hash to .env; give the plaintext to the API consumer.
 """
 
-import hashlib
 import os
-import secrets
 import sys
-from fastapi import HTTPException, Security, status
+import secrets
+import hashlib
 from fastapi.security import APIKeyHeader
-
+from fastapi import HTTPException, Security, status
 
 from config import API_KEY_HASHES
 
@@ -33,14 +19,6 @@ def _hash_key(plaintext: str) -> str:
 
 
 async def verify_api_key(api_key: str | None = Security(_api_key_header)) -> str:
-    """FastAPI dependency — raises 403 if the key is missing or invalid.
-
-    Usage:
-        @router.post("/v1/enroll")
-        async def enroll(_auth: str = Depends(verify_api_key)):
-            ...
-    """
-    # If no keys are configured (dev mode), skip auth
     if not API_KEY_HASHES:
         return "dev-no-auth"
 
@@ -58,8 +36,6 @@ async def verify_api_key(api_key: str | None = Security(_api_key_header)) -> str
 
     return api_key
 
-
-# ── CLI helper ────────────────────────────────────────────────────────────────
 
 def _cli_generate() -> None:
     plaintext = secrets.token_hex(32)

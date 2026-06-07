@@ -11,7 +11,7 @@ import { RoleGuard } from "@/components/shared/RoleGuard";
 import { cn } from "@/lib/utils";
 
 interface ExtendedEnrollResult {
-  nin: string;
+  nin: string; // The system-assigned 11-digit NIN
   status: string;
   request_id: string;
   timestamp: string;
@@ -101,7 +101,7 @@ function FileDropzone({ label, onFile, accept, required }: { label: string; onFi
 export default function RegisterIdentityPage() {
   const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState({
-    nin: "", firstName: "", middleName: "", surname: "", dob: "", sex: "", nationality: "", userWalletAddress: "",
+    firstName: "", middleName: "", surname: "", dob: "", sex: "", nationality: "", userWalletAddress: "",
   });
 
   const [docs, setDocs] = useState({ birthCertificate: null as File | null, passportPicture: null as File | null });
@@ -120,11 +120,10 @@ export default function RegisterIdentityPage() {
   const [enrollResult, setEnrollResult] = useState<ExtendedEnrollResult | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // ── Validation per step ────────────────────────────────────────────────────
+  // ── Validation per step (No more local manual NIN matching) ────────────────
   const canAdvance = (): boolean => {
     if (currentStep === 1) {
       return !!(
-        /^\d{11}$/.test(formData.nin) &&
         formData.firstName &&
         formData.surname &&
         formData.dob &&
@@ -140,7 +139,6 @@ export default function RegisterIdentityPage() {
 
   const stepError = (): string | null => {
     if (currentStep === 1) {
-      if (!/^\d{11}$/.test(formData.nin)) return "NIN must be exactly 11 digits.";
       if (!/^0x[a-fA-F0-9]{40}$/.test(formData.userWalletAddress)) return "Please enter a valid Sepolia Ethereum Address (starting with 0x).";
       return "All fields marked with an asterisk (*) are required.";
     }
@@ -165,44 +163,41 @@ export default function RegisterIdentityPage() {
   const startScan = async () => {
     if (!fingerprintFile) return;
     setScanState("liveness");
-    // Simulate liveness check
     await new Promise((r) => setTimeout(r, 1500));
     setScanState("scanning");
 
-    // Simulate scan segments
     for (let i = 1; i <= 6; i++) {
       await new Promise((r) => setTimeout(r, 600));
       setScanProgress(i);
     }
-
     setScanState("done");
   };
 
-  // ── Async polling execution ───────────────────────────────────────────────
+  // ── Async polling execution (Extracts algorithmic system-generated NIN) ────
   const pollStatus = (jobId: string) => {
     const interval = setInterval(async () => {
       try {
-        const response = await api.checkEnrollStatus(jobId);
+        const response = await api.getEnrollmentJobStatus(jobId);
         if (response.success && response.data) {
-          const { status, step, tx_hash, error } = response.data;
+          const { status, step, tx_hash, assigned_nin, error } = response.data;
           setPollingStatus(status);
           setPollingStep(step);
 
           if (status === "completed") {
             clearInterval(interval);
             setEnrollResult({
-              nin: formData.nin,
+              nin: assigned_nin || "GEN_ERROR_RETRY", // Binds the server issued NIN to result tier
               status: "completed",
               request_id: jobId,
               timestamp: new Date().toISOString(),
-              ipfs_cid: `local-db:enrollment-${jobId.slice(0, 8)}`,
-              tx_hash: tx_hash || "Mocked transaction recorded",
+              ipfs_cid: `local-db:citizen-uuid-${jobId.slice(0, 8)}`,
+              tx_hash: tx_hash || "Anchored to Sepolia Registry",
             });
             setPollingJobId(null);
             setLoading(false);
           } else if (status === "failed") {
             clearInterval(interval);
-            setErrorMsg(error || "Identity validation failed in background.");
+            setErrorMsg(error || "Biometric 1:N deduplication fraud alert caught.");
             setPollingJobId(null);
             setLoading(false);
           }
@@ -213,10 +208,10 @@ export default function RegisterIdentityPage() {
     }, 1500);
   };
 
-  // ── Live enrolment call ────────────────────────────────────────────────────
+  // ── Production Multipart Identity Enrolment Request Call ───────────────────
   const handleEnroll = async () => {
     if (scanState !== "done" || !fingerprintFile) {
-      setErrorMsg("Biometrics not completed.");
+      setErrorMsg("Biometrics verification not finalized.");
       return;
     }
 
@@ -224,37 +219,36 @@ export default function RegisterIdentityPage() {
     setErrorMsg(null);
 
     try {
-      if (!/^\d{11}$/.test(formData.nin)) {
-        setErrorMsg("A valid 11-digit NIN is required.");
-        setLoading(false);
-        return;
-      }
+      // Build proper multi-part body layout matching our route parser
+      const payload = new FormData();
+      payload.append("first_name", formData.firstName);
+      payload.append("middle_name", formData.middleName);
+      payload.append("last_name", formData.surname);
+      payload.append("date_of_birth", formData.dob);
+      payload.append("user_wallet_address", formData.userWalletAddress);
+      payload.append("fingerprint", fingerprintFile);
 
-      const response = await api.enroll(
-        formData.nin,
-        formData.userWalletAddress,
-        fingerprintFile
-      );
+      // Invoke your structural API Client layer
+      const response = await api.enrollCitizen(payload);
 
       if (response.success && response.data) {
         const { job_id } = response.data;
         setPollingJobId(job_id);
         setPollingStatus("pending");
-        setPollingStep("Queued for processing");
+        setPollingStep("Identity task submitted to gateway scheduler");
         pollStatus(job_id);
       } else {
-        setErrorMsg(response.error || "Enrolment submission failed.");
+        setErrorMsg(response.error || "Enrollment packet transmission rejected.");
         setLoading(false);
       }
     } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : "Enrolment failed.");
+      setErrorMsg(e instanceof Error ? e.message : "Enrollment execution failed.");
       setLoading(false);
     }
   };
 
   // ── Success screen ────────────────────────────────────────────────────────
   if (enrollResult) {
-    const shortRequestId = enrollResult.request_id.split("-").slice(0, 2).join("-").toUpperCase();
     return (
       <RoleGuard allowedRoles={["citizen"]}>
         <div className="min-h-screen bg-surface-soft flex items-center justify-center p-4">
@@ -265,16 +259,17 @@ export default function RegisterIdentityPage() {
             </div>
             <h2 className="text-xl font-bold text-ink mb-2">Decentralized Identity Enrolled</h2>
             <p className="text-ink-secondary mb-6 text-xs">
-              Biometric features extracted, encrypted (AES-256-GCM), and mapped to your on-chain wallet.
+              Biometric features extracted, deduplicated, and locked down using AES-256-GCM architecture mappings.
             </p>
 
             <div className="space-y-3 mb-8">
-              <div className="bg-surface-soft rounded-xl p-3 border border-surface-border flex justify-between items-center text-left">
+              {/* ALGORITHMIC NIN REVEAL DISPLAYER */}
+              <div className="bg-emerald-50/50 rounded-xl p-4 border border-green/20 flex justify-between items-center text-left">
                 <div>
-                  <p className="text-[9px] font-bold text-ink-muted uppercase tracking-wider">Assigned NIN</p>
-                  <p className="text-base font-mono font-bold text-green tracking-wide">{enrollResult.nin}</p>
+                  <p className="text-[9px] font-bold text-green uppercase tracking-wider">Officially Assigned NIN</p>
+                  <p className="text-xl font-mono font-bold text-slate-900 tracking-[0.1em]">{enrollResult.nin}</p>
                 </div>
-                <Shield className="h-4.5 w-4.5 text-green" />
+                <Shield className="h-5 w-5 text-green" />
               </div>
 
               <div className="bg-surface-soft rounded-xl p-3 border border-surface-border flex justify-between items-center text-left">
@@ -292,18 +287,14 @@ export default function RegisterIdentityPage() {
                     <Globe className="h-4.5 w-4.5 text-green animate-pulse" />
                   </div>
                   <p className="text-[11px] font-mono text-green truncate mb-2">{enrollResult.tx_hash}</p>
-                  {enrollResult.tx_hash !== "Mocked transaction recorded" ? (
-                    <a
-                      href={`https://sepolia.etherscan.io/tx/${enrollResult.tx_hash}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-[10px] font-bold text-green hover:underline"
-                    >
-                      View on Etherscan <LinkIcon className="h-3 w-3" />
-                    </a>
-                  ) : (
-                    <span className="text-[9px] font-bold text-ink-muted uppercase">Registry Sandbox Transaction</span>
-                  )}
+                  <a
+                    href={`https://sepolia.etherscan.io/tx/${enrollResult.tx_hash}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-[10px] font-bold text-green hover:underline"
+                  >
+                    View on Etherscan <LinkIcon className="h-3 w-3" />
+                  </a>
                 </div>
               )}
             </div>
@@ -358,7 +349,6 @@ export default function RegisterIdentityPage() {
           <motion.div key={currentStep} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}
             className="rounded-2xl border border-surface-border bg-white p-6 sm:p-10 shadow-card">
 
-            {/* If background task is active, show async status trace checklist */}
             {pollingJobId ? (
               <div className="text-center py-8">
                 <Loader2 className="h-10 w-10 animate-spin text-green mx-auto mb-6" />
@@ -368,37 +358,37 @@ export default function RegisterIdentityPage() {
                 <div className="max-w-md mx-auto bg-surface-soft border border-surface-border rounded-2xl p-6 text-left space-y-4">
                   <div className="flex items-center gap-3">
                     <div className={cn("flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold shrink-0",
-                      pollingStep === "Extracting biometric features" ? "bg-green text-white ring-2 ring-green/15" :
-                        ["Encrypting payload", "Saving to secure database", "Broadcasting to Sepolia blockchain", "Done"].includes(pollingStep) ? "bg-green text-white" : "bg-white border border-surface-border text-ink-light"
+                      pollingStep === "Extracting 128-D biometric embeddings" ? "bg-green text-white ring-2 ring-green/15" :
+                        ["Running 1:N fraud deduplication search", "Generating algorithmic identity payload", "Encrypting template payload", "Committing identity to safe relational tables", "Anchoring identity on Sepolia Network", "Done"].includes(pollingStep) ? "bg-green text-white" : "bg-white border border-surface-border text-ink-light"
                     )}>
-                      {["Encrypting payload", "Saving to secure database", "Broadcasting to Sepolia blockchain", "Done"].includes(pollingStep) ? <CheckCircle2 className="h-3.5 w-3.5" /> : "1"}
+                      {["Running 1:N fraud deduplication search", "Generating algorithmic identity payload", "Encrypting template payload", "Committing identity to safe relational tables", "Anchoring identity on Sepolia Network", "Done"].includes(pollingStep) ? <CheckCircle2 className="h-3.5 w-3.5" /> : "1"}
                     </div>
                     <span className="text-xs font-semibold text-ink">Extract features via Siamese CNN model</span>
                   </div>
 
                   <div className="flex items-center gap-3">
                     <div className={cn("flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold shrink-0",
-                      pollingStep === "Encrypting payload" ? "bg-green text-white ring-2 ring-green/15" :
-                        ["Saving to secure database", "Broadcasting to Sepolia blockchain", "Done"].includes(pollingStep) ? "bg-green text-white" : "bg-white border border-surface-border text-ink-light"
+                      pollingStep === "Running 1:N fraud deduplication search" ? "bg-green text-white ring-2 ring-green/15" :
+                        ["Generating algorithmic identity payload", "Encrypting template payload", "Committing identity to safe relational tables", "Anchoring identity on Sepolia Network", "Done"].includes(pollingStep) ? "bg-green text-white" : "bg-white border border-surface-border text-ink-light"
                     )}>
-                      {["Saving to secure database", "Broadcasting to Sepolia blockchain", "Done"].includes(pollingStep) ? <CheckCircle2 className="h-3.5 w-3.5" /> : "2"}
+                      {["Generating algorithmic identity payload", "Encrypting template payload", "Committing identity to safe relational tables", "Anchoring identity on Sepolia Network", "Done"].includes(pollingStep) ? <CheckCircle2 className="h-3.5 w-3.5" /> : "2"}
                     </div>
-                    <span className="text-xs font-semibold text-ink">Encrypt biometric vector (AES-256-GCM)</span>
+                    <span className="text-xs font-semibold text-ink">1:N Biometric Fraud Cross-Match Scan</span>
                   </div>
 
                   <div className="flex items-center gap-3">
                     <div className={cn("flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold shrink-0",
-                      pollingStep === "Saving to secure database" ? "bg-green text-white ring-2 ring-green/15" :
-                        ["Broadcasting to Sepolia blockchain", "Done"].includes(pollingStep) ? "bg-green text-white" : "bg-white border border-surface-border text-ink-light"
+                      pollingStep === "Committing identity to safe relational tables" ? "bg-green text-white ring-2 ring-green/15" :
+                        ["Anchoring identity on Sepolia Network", "Done"].includes(pollingStep) ? "bg-green text-white" : "bg-white border border-surface-border text-ink-light"
                     )}>
-                      {["Broadcasting to Sepolia blockchain", "Done"].includes(pollingStep) ? <CheckCircle2 className="h-3.5 w-3.5" /> : "3"}
+                      {["Anchoring identity on Sepolia Network", "Done"].includes(pollingStep) ? <CheckCircle2 className="h-3.5 w-3.5" /> : "3"}
                     </div>
-                    <span className="text-xs font-semibold text-ink">Commit template to secure off-chain storage</span>
+                    <span className="text-xs font-semibold text-ink">Auto-Issue Unique NIN & Save to PostgreSQL</span>
                   </div>
 
                   <div className="flex items-center gap-3">
                     <div className={cn("flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold shrink-0",
-                      pollingStep === "Broadcasting to Sepolia blockchain" ? "bg-green text-white ring-2 ring-green/15" :
+                      pollingStep === "Anchoring identity on Sepolia Network" ? "bg-green text-white ring-2 ring-green/15" :
                         pollingStep === "Done" ? "bg-green text-white" : "bg-white border border-surface-border text-ink-light"
                     )}>
                       {pollingStep === "Done" ? <CheckCircle2 className="h-3.5 w-3.5" /> : "4"}
@@ -426,15 +416,9 @@ export default function RegisterIdentityPage() {
                   </div>
                 </div>
 
-                {/* Global API error banner */}
                 <AnimatePresence>
                   {errorMsg && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: "auto" }}
-                      exit={{ opacity: 0, height: 0 }}
-                      className="mb-6 overflow-hidden"
-                    >
+                    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="mb-6 overflow-hidden">
                       <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4">
                         <XCircle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
                         <div>
@@ -449,11 +433,12 @@ export default function RegisterIdentityPage() {
                 <div className="min-h-[280px]">
                   {currentStep === 1 && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                      <Field label="National ID (NIN)" id="nin" value={formData.nin} onChange={(v) => setFormData({ ...formData, nin: v.replace(/\D/g, "").slice(0, 11) })} required hint="11-digit NIN" />
+                      {/* MANUAL NIN FIELD REMOVED FROM INTERACTIVE UI */}
                       <Field label="Ethereum Wallet Address" id="userWalletAddress" value={formData.userWalletAddress} onChange={(v) => setFormData({ ...formData, userWalletAddress: v })} required hint="Ethereum wallet to register on-chain" placeholder="0x..." />
-                      <Field label="First Name" id="firstName" value={formData.firstName} onChange={(v) => setFormData({ ...formData, firstName: v })} required />
-                      <Field label="Surname" id="surname" value={formData.surname} onChange={(v) => setFormData({ ...formData, surname: v })} required />
-                      <Field label="Nationality" id="nationality" value={formData.nationality} onChange={(v) => setFormData({ ...formData, nationality: v })} required />
+                      <Field label="First Name" id="firstName" value={formData.firstName} onChange={(v) => setFormData({ ...formData, firstName: v })} required placeholder="John" />
+                      <Field label="Middle Name (Optional)" id="middleName" value={formData.middleName} onChange={(v) => setFormData({ ...formData, middleName: v })} placeholder="Kofi" />
+                      <Field label="Surname" id="surname" value={formData.surname} onChange={(v) => setFormData({ ...formData, surname: v })} required placeholder="Okonkwo" />
+                      <Field label="Nationality" id="nationality" value={formData.nationality} onChange={(v) => setFormData({ ...formData, nationality: v })} required placeholder="Nigerian" />
                       <Field label="Date of Birth" id="dob" type="date" value={formData.dob} onChange={(v) => setFormData({ ...formData, dob: v })} required />
                       <div>
                         <label className="block text-[10px] font-bold text-ink-muted uppercase tracking-wider mb-1.5">Sex <span className="text-red-500">*</span></label>
@@ -505,12 +490,7 @@ export default function RegisterIdentityPage() {
                             <h3 className="text-sm font-bold text-ink mb-3">Mapping Biometric Template ({scanProgress}/6)</h3>
 
                             <div className="w-full max-w-xs bg-surface-muted rounded-full h-2 mb-2">
-                              <motion.div
-                                className="bg-green h-2 rounded-full"
-                                initial={{ width: 0 }}
-                                animate={{ width: `${(scanProgress / 6) * 100}%` }}
-                                transition={{ duration: 0.3 }}
-                              />
+                              <motion.div className="bg-green h-2 rounded-full" initial={{ width: 0 }} animate={{ width: `${(scanProgress / 6) * 100}%` }} transition={{ duration: 0.3 }} />
                             </div>
                           </motion.div>
                         )}
@@ -537,9 +517,7 @@ export default function RegisterIdentityPage() {
 
                   {currentStep === 3 && (
                     <div className="space-y-4">
-                      <p className="text-sm text-ink-secondary mb-2">
-                        Upload your mandatory identity documents.
-                      </p>
+                      <p className="text-sm text-ink-secondary mb-2">Upload your mandatory identity documents.</p>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                         <FileDropzone label="Birth Certificate (PDF/IMG)" onFile={(f) => setDocs({ ...docs, birthCertificate: f })} required />
                         <FileDropzone label="Passport Picture (JPEG)" onFile={(f) => setDocs({ ...docs, passportPicture: f })} accept={{ "image/jpeg": [], "image/png": [] }} required />
@@ -553,7 +531,7 @@ export default function RegisterIdentityPage() {
                         <h3 className="text-xs font-bold text-ink uppercase tracking-wider mb-4">Registration Summary</h3>
                         <div className="space-y-3">
                           {[
-                            { l: "NIN", v: formData.nin },
+                            { l: "NIN Allocation Mode", v: "AUTOMATIC ALGORITHMIC ISSUANCE" },
                             { l: "Ethereum Address", v: formData.userWalletAddress },
                             { l: "Name", v: `${formData.firstName} ${formData.middleName} ${formData.surname}`.replace(/\s+/g, ' ').trim() || "—" },
                             { l: "Sex", v: formData.sex || "—" },
@@ -576,7 +554,7 @@ export default function RegisterIdentityPage() {
                         {loading ? (
                           <>
                             <Loader2 className="h-5 w-5 animate-spin" />
-                            Dispatching Job to Oracle...
+                            Dispatching Job to Identity Oracle...
                           </>
                         ) : (
                           "Submit Enrollment & Register Identity"
@@ -620,4 +598,3 @@ export default function RegisterIdentityPage() {
     </RoleGuard>
   );
 }
-

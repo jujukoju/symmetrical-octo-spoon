@@ -20,22 +20,12 @@ def contrastive_loss(
     label: torch.Tensor,
     margin: float = 1.0,
 ) -> torch.Tensor:
-    """
-    Contrastive Loss (Hadsell et al., 2006) using cosine distance.
-
-    Loss = (1 - y) * d²  +  y * max(0, margin - d)²
-
-    Args:
-        emb1:   Embeddings from branch 1, shape (B, D).
-        emb2:   Embeddings from branch 2, shape (B, D).
-        label:  0 = genuine pair, 1 = impostor pair, shape (B,).
-        margin: Minimum distance enforced for impostor pairs (default 1.0).
-
-    Returns:
-        Scalar mean loss over the batch.
-    """
-    cosine_sim = F.cosine_similarity(emb1, emb2, dim=1)
-    distance = 1.0 - cosine_sim                                   # ∈ [0, 2]
+    # Force embeddings to have unit magnitude (length of 1)
+    emb1_norm = F.normalize(emb1, p=2, dim=1)
+    emb2_norm = F.normalize(emb2, p=2, dim=1)
+    
+    cosine_sim = F.cosine_similarity(emb1_norm, emb2_norm, dim=1)
+    distance = 1.0 - cosine_sim  # Now strictly bounded and stable
 
     genuine_loss = (1.0 - label) * torch.pow(distance, 2)
     impostor_loss = label * torch.pow(torch.clamp(margin - distance, min=0.0), 2)

@@ -8,7 +8,6 @@ Metrics exposed at GET /metrics (mounted by main.py when ENABLE_METRICS=true).
 
 from prometheus_client import Counter, Histogram
 
-# ── Enrolment ──────────────────────────────────────────────────────────────────
 enroll_success = Counter(
     "ninauth_enroll_success_total",
     "Total successful enrolment requests.",
@@ -20,7 +19,6 @@ enroll_error = Counter(
     ["reason"],   # reason label: validation_error | db_error | crypto_error
 )
 
-# ── Verification ───────────────────────────────────────────────────────────────
 verification_decision = Counter(
     "ninauth_verification_decision_total",
     "Verification decisions by outcome.",

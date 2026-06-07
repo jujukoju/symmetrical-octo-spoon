@@ -1,9 +1,7 @@
 """
-oracle_api/validators.py
--------------------------
-Input validation helpers for NIN and fingerprint images.
+Input validation for NIN and fingerprint images.
 
-Nigerian NIN format:
+NIN format:
   - Exactly 11 decimal digits (no spaces, no letters, no hyphens).
   - Reference: NIMC (National Identity Management Commission) specification.
 
@@ -11,11 +9,12 @@ Image validation:
   - Accepts JPEG, PNG, BMP uploads.
   - Decodes the raw bytes with OpenCV to confirm the image is valid.
   - Enforces a maximum upload size (10 MB) as a defence against denial-of-service.
+  
 """
 
 import re
-import numpy as np
 import cv2
+import numpy as np
 
 _NIN_RE = re.compile(r"^\d{11}$")
 
@@ -24,39 +23,16 @@ ALLOWED_MIME_PREFIXES = ("image/jpeg", "image/jpg", "image/png", "image/bmp")
 
 
 def validate_nin(nin: str) -> str:
-    """Validate and return a cleaned Nigerian NIN.
-
-    Args:
-        nin: Raw NIN string from the request.
-
-    Returns:
-        The NIN stripped of surrounding whitespace.
-
-    Raises:
-        ValueError: If the NIN does not match the 11-digit format.
-    """
     nin = nin.strip()
     if not _NIN_RE.match(nin):
         raise ValueError(
             f"Invalid NIN '{nin}'. "
-            "A Nigerian NIN must be exactly 11 decimal digits with no spaces or letters."
+            "An NIN must be exactly 11 decimal digits with no spaces or letters."
         )
     return nin
 
 
 def validate_image_bytes(contents: bytes, content_type: str) -> np.ndarray:
-    """Validate raw image bytes and decode to a numpy array.
-
-    Args:
-        contents:     Raw bytes of the uploaded file.
-        content_type: MIME type from the UploadFile (e.g. 'image/bmp').
-
-    Returns:
-        Decoded BGR numpy array (as returned by cv2.imdecode).
-
-    Raises:
-        ValueError: If the file is too large, wrong MIME type, or not a valid image.
-    """
     if len(contents) > MAX_IMAGE_BYTES:
         raise ValueError(
             f"Image is too large ({len(contents) / 1024 / 1024:.1f} MB). "

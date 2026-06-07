@@ -1,7 +1,6 @@
+# preprocessing/pipeline.py
 """
-preprocessing/pipeline.py
---------------------------
-Modular fingerprint preprocessing pipeline.
+Modular fingerprint preprocessing pipeline with Dynamic Gabor Tuning.
 
 Reusable in:
   - Training scripts  (process_directory → cached PNGs)
@@ -21,26 +20,15 @@ from albumentations.pytorch import ToTensorV2
 
 
 class PreprocessingPipeline:
-    """End-to-end fingerprint preprocessing pipeline with modular steps."""
+    """End-to-end fingerprint preprocessing pipeline with adaptive modular steps."""
 
     def __init__(
         self,
         img_size: tuple = (128, 128),
         gabor_ksize: int = 21,
-        gabor_sigma: float = 5.0,
-        gabor_thetas: Optional[list] = None,
-        gabor_lambda: float = 10.0,
-        gabor_gamma: float = 0.5,
     ):
-        if gabor_thetas is None:
-            gabor_thetas = [0, np.pi / 4, np.pi / 2, 3 * np.pi / 4]
-
         self.img_size = img_size
         self.gabor_ksize = gabor_ksize
-        self.gabor_sigma = gabor_sigma
-        self.gabor_thetas = gabor_thetas
-        self.gabor_lambda = gabor_lambda
-        self.gabor_gamma = gabor_gamma
 
         # Augmentation pipeline used only during training
         self.augment = A.Compose([
@@ -53,8 +41,6 @@ class PreprocessingPipeline:
             ToTensorV2(),
         ])
 
-    # Modular preprocessing steps
-
     def load_image(self, path):
         img = cv2.imread(str(path))
         if img is None:
@@ -62,7 +48,6 @@ class PreprocessingPipeline:
         return img
 
     def to_grayscale(self, img):
-
         if len(img.shape) == 3:
             img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         return img
@@ -76,7 +61,6 @@ class PreprocessingPipeline:
         variance = mu_sq - mu**2
 
         variance = cv2.normalize(variance, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-
         _, thresh = cv2.threshold(variance, 15, 255, cv2.THRESH_BINARY)
 
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (25, 25))
@@ -99,48 +83,90 @@ class PreprocessingPipeline:
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         return clahe.apply(img)
 
+    def _estimate_ridge_parameters(self, img: np.ndarray) -> tuple[float, float]:
+        """
+        Dynamically estimates the global ridge frequency wavelength (lambda) and 
+        dominant orientation variance (sigma scaling) using spatial gradients.
+        """
+        # 1. Compute Gradients via Sobel operators
+        gx = cv2.Sobel(img, cv2.CV_32F, 1, 0, ksize=3)
+        gy = cv2.Sobel(img, cv2.CV_32F, 0, 1, ksize=3)
+
+        # 2. Compute Structure Tensor components to find orientation variance
+        gxx = gx * gx
+        gyy = gy * gy
+        
+        # Look at regional averages
+        mean_gxx = np.mean(gxx)
+        mean_gyy = np.mean(gyy)
+
+        # 3. Derive adaptive wavelength wavelength (Lambda)
+        # We project the image onto 1D spatial profiles to find standard crest-to-valley distances
+        row_proj = np.mean(img, axis=1)
+        # Count zero-crossings across the mean-centered spatial signal
+        zero_crossings = np.where(np.diff(np.sign(row_proj - np.mean(row_proj))))[0]
+        
+        if len(zero_crossings) > 2:
+            # Average distance between peaks defines the dynamic ridge wavelength (lambda)
+            computed_lambda = float(np.mean(np.diff(zero_crossings)) * 2.0)
+        else:
+            computed_lambda = 10.0 # Robust SOTA fallback baseline if ROI is uniform
+
+        # Constrain lambda bounds to avoid scaling aberrations in highly altered fingerprints
+        computed_lambda = np.clip(computed_lambda, 4.0, 18.0)
+
+        # 4. Derive adaptive Sigma (gaussian envelope) proportional to our dynamic wavelength
+        # Higher contrast/variance variance implies prominent ridges requiring larger sigma sweeps
+        total_energy = mean_gxx + mean_gyy
+        if total_energy > 100.0:
+            computed_sigma = computed_lambda * 0.55  # Optimal ratio to capture 1.5 ridge blocks
+        else:
+            computed_sigma = computed_lambda * 0.40  # Tighten scope for faint/blurry textures
+
+        return computed_lambda, computed_sigma
+
     def apply_gabor_filter(self, img: np.ndarray) -> np.ndarray:
-        """Apply Gabor filter bank and return mean response as uint8."""
+        """
+        Dynamically tunes filter parameters on a per-image context baseline
+        to cleanly isolate ridgeline patterns without destroying minutiae.
+        """
+        # Compute optimized lambda and sigma coefficients for this exact asset context
+        dynamic_lambda, dynamic_sigma = self._estimate_ridge_parameters(img)
+        
+        # 4-orientation bank (0°, 45°, 90°, 135°) to sweep all pattern paths
+        thetas = [0, np.pi / 4, np.pi / 2, 3 * np.pi / 4]
+        gamma = 0.5 # Baseline aspect ratio remains fixed for standard ridge ellipses
+        
         responses = []
-        for theta in self.gabor_thetas:
+        for theta in thetas:
             kernel = cv2.getGaborKernel(
                 (self.gabor_ksize, self.gabor_ksize),
-                self.gabor_sigma,
+                dynamic_sigma,
                 theta,
-                self.gabor_lambda,
-                self.gabor_gamma,
+                dynamic_lambda,
+                gamma,
             )
             filtered = cv2.filter2D(img, cv2.CV_64F, kernel)
             responses.append(filtered)
+            
+        # Compile response maps using orientation-independent mean aggregation
         enhanced = np.mean(responses, axis=0)
         enhanced = cv2.normalize(enhanced, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
         return enhanced
 
     def resize_image(self, img: np.ndarray) -> np.ndarray:
-        """Resize to target img_size (width, height)."""
         return cv2.resize(img, self.img_size)
 
     def normalize_image(self, img: np.ndarray) -> np.ndarray:
-        """Normalise pixel values to [0, 1] float32."""
         return img.astype("float32") / 255.0
 
     # ── Pipeline orchestration ──────────────────────────────────────────────
 
     def process(self, img: np.ndarray, augment: bool = False) -> np.ndarray:
-        """
-        Run the full preprocessing pipeline on a single image array.
-
-        Args:
-            img:     Raw image as numpy array (BGR or grayscale).
-            augment: Apply random augmentations (training only).
-
-        Returns:
-            Processed image as float32 in [0,1], shape (H, W).
-        """
         img = self.to_grayscale(img)
         img = self.extract_roi(img)
         img = self.enhance_image(img)
-        img = self.apply_gabor_filter(img)
+        img = self.apply_gabor_filter(img)  # Calls the dynamic tuning engine
         img = self.resize_image(img)
 
         if augment:
@@ -159,16 +185,6 @@ class PreprocessingPipeline:
         augment: bool = False,
         max_images: Optional[int] = None,
     ) -> None:
-        """
-        Preprocess an entire directory of raw fingerprint images and save
-        the results as .png files in output_dir (flat structure).
-
-        Args:
-            input_dir:  Root directory containing raw images (recurses).
-            output_dir: Destination for processed PNGs.
-            augment:    Apply augmentation (training mode).
-            max_images: Optional cap on number of images to process.
-        """
         input_dir = Path(input_dir)
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -178,12 +194,12 @@ class PreprocessingPipeline:
         for ext in extensions:
             image_paths.extend(input_dir.rglob(ext))
 
-        # De-duplicate (case-insensitive filesystems may double-count)
         seen: set = set()
         deduped: list = []
         for p in image_paths:
             key = str(p).lower()
             if key not in seen:
+                seen.add(key)
                 seen.add(key)
                 deduped.append(p)
         image_paths = deduped
@@ -191,7 +207,7 @@ class PreprocessingPipeline:
         if max_images:
             image_paths = image_paths[:max_images]
 
-        print(f"Starting preprocessing of {len(image_paths)} images → {output_dir}")
+        print(f"Starting adaptive preprocessing of {len(image_paths)} images → {output_dir}")
         total_start = time.perf_counter()
         times: list = []
         failed = 0
@@ -202,7 +218,6 @@ class PreprocessingPipeline:
                 img = self.load_image(img_path)
                 processed = self.process(img, augment=augment)
 
-                # Convert float32 back to uint8 for lossless PNG storage
                 if processed.dtype == np.float32:
                     save_img = (processed * 255).astype(np.uint8)
                 else:
