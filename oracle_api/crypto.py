@@ -1,5 +1,8 @@
 """
+oracle_api/crypto.py
+--------------------
 AES-256-GCM encryption utilities for biometric embedding vectors.
+Guarantees clean Base64 string encoding and decoding encapsulation to eliminate serialization drifts.
 """
 
 import os
@@ -33,21 +36,34 @@ class BiometricEncryptor:
         self.aesgcm = AESGCM(self.key)
 
     def encrypt_vector(self, feature_vector: np.ndarray) -> str:
+        """
+        Serializes and encrypts a 1D feature vector array into an authenticated Base64 string payload.
+        """
         if isinstance(feature_vector, np.ndarray):
             data = json.dumps(feature_vector.tolist()).encode("utf-8")
         else:
             data = json.dumps(list(feature_vector)).encode("utf-8")
 
-        nonce      = os.urandom(12)                     # 96-bit nonce
+        nonce = os.urandom(12)  # 96-bit nonce
         ciphertext = self.aesgcm.encrypt(nonce, data, None)
+        
+        # Explicit concatenation of raw bytes prior to b64 serialization prevents encoding drift
         return base64.b64encode(nonce + ciphertext).decode("ascii")
 
     def decrypt_vector(self, encrypted_b64: str) -> np.ndarray:
-        payload    = base64.b64decode(encrypted_b64)
-        nonce      = payload[:12]
+        """
+        Decodes a combined Base64 string, extracts the unique initialization vector, 
+        and performs authenticated AES-256-GCM decryption.
+        """
+        payload = base64.b64decode(encrypted_b64)
+        if len(payload) < 12:
+            raise ValueError("Encrypted payload length is structurally invalid.")
+            
+        nonce = payload[:12]
         ciphertext = payload[12:]
-        plaintext  = self.aesgcm.decrypt(nonce, ciphertext, None)
+        plaintext = self.aesgcm.decrypt(nonce, ciphertext, None)
         return np.array(json.loads(plaintext.decode("utf-8")), dtype=np.float32)
+
 
 EmbeddingEncryptor = BiometricEncryptor
 

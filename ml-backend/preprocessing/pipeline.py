@@ -1,12 +1,8 @@
-# preprocessing/pipeline.py
 """
+preprocessing/pipeline.py
+--------------------------
 Modular fingerprint preprocessing pipeline with Dynamic Gabor Tuning.
-
-Reusable in:
-  - Training scripts  (process_directory → cached PNGs)
-  - FastAPI service   (process → single image array)
-
-Output format: grayscale PNG images saved to disk.
+Fixed return type contradictions, cross-platform path safety, and robust gradient safeguards.
 """
 
 import cv2
@@ -16,7 +12,6 @@ from pathlib import Path
 from typing import Optional
 
 import albumentations as A
-from albumentations.pytorch import ToTensorV2
 
 
 class PreprocessingPipeline:
@@ -30,7 +25,7 @@ class PreprocessingPipeline:
         self.img_size = img_size
         self.gabor_ksize = gabor_ksize
 
-        # Augmentation pipeline used only during training
+        # Augmentations return NumPy arrays to maintain structural consistency
         self.augment = A.Compose([
             A.Rotate(limit=10, p=0.5),
             A.HorizontalFlip(p=0.5),
@@ -38,21 +33,20 @@ class PreprocessingPipeline:
             A.RandomScale(scale_limit=0.1, p=0.5),
             A.RandomBrightnessContrast(p=0.3),
             A.Resize(height=img_size[0], width=img_size[1]),
-            ToTensorV2(),
         ])
 
-    def load_image(self, path):
+    def load_image(self, path: Path) -> np.ndarray:
         img = cv2.imread(str(path))
         if img is None:
             raise ValueError(f"Could not read image: {path}")
         return img
 
-    def to_grayscale(self, img):
+    def to_grayscale(self, img: np.ndarray) -> np.ndarray:
         if len(img.shape) == 3:
             img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         return img
 
-    def extract_roi(self, img):
+    def extract_roi(self, img: np.ndarray) -> np.ndarray:
         img_f = img.astype(np.float32)
 
         block_size = (11, 11)
@@ -88,54 +82,41 @@ class PreprocessingPipeline:
         Dynamically estimates the global ridge frequency wavelength (lambda) and 
         dominant orientation variance (sigma scaling) using spatial gradients.
         """
-        # 1. Compute Gradients via Sobel operators
         gx = cv2.Sobel(img, cv2.CV_32F, 1, 0, ksize=3)
         gy = cv2.Sobel(img, cv2.CV_32F, 0, 1, ksize=3)
 
-        # 2. Compute Structure Tensor components to find orientation variance
         gxx = gx * gx
         gyy = gy * gy
         
-        # Look at regional averages
         mean_gxx = np.mean(gxx)
         mean_gyy = np.mean(gyy)
 
-        # 3. Derive adaptive wavelength wavelength (Lambda)
-        # We project the image onto 1D spatial profiles to find standard crest-to-valley distances
+        # Derive adaptive wavelength
         row_proj = np.mean(img, axis=1)
-        # Count zero-crossings across the mean-centered spatial signal
         zero_crossings = np.where(np.diff(np.sign(row_proj - np.mean(row_proj))))[0]
         
-        if len(zero_crossings) > 2:
-            # Average distance between peaks defines the dynamic ridge wavelength (lambda)
+        # Guard against sparse or noisy zero-crossing allocations in worn/damaged prints
+        if len(zero_crossings) > 6:
             computed_lambda = float(np.mean(np.diff(zero_crossings)) * 2.0)
         else:
-            computed_lambda = 10.0 # Robust SOTA fallback baseline if ROI is uniform
+            computed_lambda = 8.0 # Tighter fallback pattern target for high-noise/scarred profiles
 
-        # Constrain lambda bounds to avoid scaling aberrations in highly altered fingerprints
-        computed_lambda = np.clip(computed_lambda, 4.0, 18.0)
+        computed_lambda = np.clip(computed_lambda, 4.0, 14.0)
 
-        # 4. Derive adaptive Sigma (gaussian envelope) proportional to our dynamic wavelength
-        # Higher contrast/variance variance implies prominent ridges requiring larger sigma sweeps
         total_energy = mean_gxx + mean_gyy
         if total_energy > 100.0:
-            computed_sigma = computed_lambda * 0.55  # Optimal ratio to capture 1.5 ridge blocks
+            computed_sigma = computed_lambda * 0.55
         else:
-            computed_sigma = computed_lambda * 0.40  # Tighten scope for faint/blurry textures
+            computed_sigma = computed_lambda * 0.40
 
         return computed_lambda, computed_sigma
 
     def apply_gabor_filter(self, img: np.ndarray) -> np.ndarray:
-        """
-        Dynamically tunes filter parameters on a per-image context baseline
-        to cleanly isolate ridgeline patterns without destroying minutiae.
-        """
-        # Compute optimized lambda and sigma coefficients for this exact asset context
+        """Dynamically tunes filter parameters per image context."""
         dynamic_lambda, dynamic_sigma = self._estimate_ridge_parameters(img)
         
-        # 4-orientation bank (0°, 45°, 90°, 135°) to sweep all pattern paths
         thetas = [0, np.pi / 4, np.pi / 2, 3 * np.pi / 4]
-        gamma = 0.5 # Baseline aspect ratio remains fixed for standard ridge ellipses
+        gamma = 0.5
         
         responses = []
         for theta in thetas:
@@ -149,7 +130,6 @@ class PreprocessingPipeline:
             filtered = cv2.filter2D(img, cv2.CV_64F, kernel)
             responses.append(filtered)
             
-        # Compile response maps using orientation-independent mean aggregation
         enhanced = np.mean(responses, axis=0)
         enhanced = cv2.normalize(enhanced, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
         return enhanced
@@ -163,20 +143,24 @@ class PreprocessingPipeline:
     # ── Pipeline orchestration ──────────────────────────────────────────────
 
     def process(self, img: np.ndarray, augment: bool = False) -> np.ndarray:
+        """
+        Processes a single input fingerprint array.
+        Guarantees a clean NumPy return signature regardless of execution flags.
+        """
         img = self.to_grayscale(img)
         img = self.extract_roi(img)
         img = self.enhance_image(img)
-        img = self.apply_gabor_filter(img)  # Calls the dynamic tuning engine
+        img = self.apply_gabor_filter(img)
         img = self.resize_image(img)
 
         if augment:
             if img.dtype != np.uint8:
                 img = (img * 255).astype(np.uint8)
-            result = self.augment(image=img)["image"]
-        else:
-            result = self.normalize_image(img)
+            # Extracted result is explicitly kept as an image matrix array
+            img = self.augment(image=img)["image"]
 
-        return result
+        # Ensure both validation and training passes share standard scaling normalization
+        return self.normalize_image(img)
 
     def process_directory(
         self,
@@ -189,17 +173,15 @@ class PreprocessingPipeline:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        extensions = ("*.bmp", "*.BMP", "*.png", "*.jpg", "*.jpeg")
-        image_paths: list = []
-        for ext in extensions:
-            image_paths.extend(input_dir.rglob(ext))
+        # Cross-platform case safety check
+        all_files = set(input_dir.rglob("*"))
+        image_paths = [f for f in all_files if f.suffix.lower() in [".bmp", ".png", ".jpg", ".jpeg"]]
 
         seen: set = set()
         deduped: list = []
         for p in image_paths:
             key = str(p).lower()
             if key not in seen:
-                seen.add(key)
                 seen.add(key)
                 deduped.append(p)
         image_paths = deduped
@@ -218,10 +200,8 @@ class PreprocessingPipeline:
                 img = self.load_image(img_path)
                 processed = self.process(img, augment=augment)
 
-                if processed.dtype == np.float32:
-                    save_img = (processed * 255).astype(np.uint8)
-                else:
-                    save_img = processed
+                # Safe explicit NumPy conversion for image disk serialization
+                save_img = (processed * 255).astype(np.uint8)
 
                 out_path = output_dir / f"{img_path.stem}.png"
                 cv2.imwrite(str(out_path), save_img)
@@ -245,3 +225,8 @@ class PreprocessingPipeline:
         print(f"  Total time   : {total_time:.2f}s")
         print(f"  Avg/image    : {total_time / n:.4f}s")
         print(f"  Output dir   : {output_dir}")
+
+
+if __name__ == "__main__":
+    # Execution entry point
+    pipeline = PreprocessingPipeline()

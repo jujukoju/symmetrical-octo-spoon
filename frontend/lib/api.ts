@@ -102,6 +102,15 @@ export const api = {
     });
   },
 
+  // ── Pre-Defense Compatibility Alias ─────────────────────────────────────────
+  async enrollCitizen(
+    nin: string,
+    userWalletAddress: string,
+    fingerprintFile: File
+  ): Promise<any> {
+    return this.enroll(nin, userWalletAddress, fingerprintFile);
+  },
+
   async checkEnrollStatus(
     jobId: string
   ): Promise<

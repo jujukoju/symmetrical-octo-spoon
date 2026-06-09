@@ -2,12 +2,7 @@
 data/split.py
 -------------
 Subject-wise dataset splitting for the SOCOFing fingerprint dataset.
-
-Parses all image filenames (Real + Altered) into a metadata DataFrame with:
-  subject_id, sex, hand, finger_name, alteration_type, difficulty,
-  filename, full_path, split
-
-Split ratios: 70% train / 15% val / 15% test (subject-wise, no leakage).
+Optimized to handle cross-platform filesystem casing and dynamic validation scaling.
 """
 
 import pandas as pd
@@ -16,24 +11,12 @@ from typing import Optional
 from sklearn.model_selection import train_test_split
 
 
-# ── Filename parser ────────────────────────────────────────────────────────
-
 def parse_filename(filename: str) -> dict:
     """
-    Parse a SOCOFing filename into its metadata components.
-
-    Real format:
-        {id}__{sex}_{hand}_{finger}_finger.BMP
-        e.g. 100__M_Left_index_finger.BMP
-
-    Altered format:
-        {id}__{sex}_{hand}_{finger}_finger_{alteration}_{difficulty}.BMP
-        e.g. 100__M_Left_index_finger_CR_Easy.BMP
-
-    Returns a dict with keys:
-        subject_id, sex, hand, finger_name,
-        alteration_type, difficulty, filename
+    Parse a SOCOFing filename into its metadata components securely.
+    Removes file extensions completely before indexing string segments.
     """
+    # Force uppercase parsing extraction while discarding the trailing extension safely
     stem = Path(filename).stem
     parts = stem.split("__")
 
@@ -53,16 +36,21 @@ def parse_filename(filename: str) -> dict:
     try:
         subject_id = int(parts[0])
         meta = parts[1].split("_")
-        # meta = [sex, hand, finger, "finger", (alteration,), (difficulty,)]
 
-        sex = meta[0] if len(meta) > 0 else None          # M / F
+        sex = meta[0] if len(meta) > 0 else None           # M / F
         hand = meta[1] if len(meta) > 1 else None          # Left / Right
         finger_name = meta[2] if len(meta) > 2 else None   # index / little / ...
 
-        # meta[3] is always the literal "finger" — skip it
-        alteration_type = meta[4] if len(meta) > 4 else "real"   # CR / Obl / Zcut / real
-        difficulty_raw = meta[5] if len(meta) > 5 else "real"    # Easy / Medium / Hard / real
-        difficulty = difficulty_raw.lower()                        # normalise
+        # Handle structural metadata strings without trailing extension leaks
+        alteration_type = meta[4] if len(meta) > 4 else "real"
+        
+        if len(meta) > 5:
+            # Clean up potential extension remnants if stem parsing drifts
+            difficulty_raw = meta[5].split(".")[0]
+        else:
+            difficulty_raw = "real"
+            
+        difficulty = difficulty_raw.lower()
 
         return {
             "subject_id": subject_id,
@@ -78,8 +66,6 @@ def parse_filename(filename: str) -> dict:
         return empty
 
 
-# ── Split generator ────────────────────────────────────────────────────────
-
 def create_subject_wise_split(
     socofing_root: str = "data/SOCOFing",
     output_dir: str = "data/metadata",
@@ -88,39 +74,22 @@ def create_subject_wise_split(
     random_state: int = 42,
 ) -> pd.DataFrame:
     """
-    Scan all images in socofing_root, build metadata, perform subject-wise
-    70/15/15 train/val/test split, and save metadata.csv.
-
-    Subjects never appear in more than one split (no leakage).
-
-    Args:
-        socofing_root:  Root of SOCOFing dataset containing Real/ and Altered/.
-        output_dir:     Directory where metadata.csv will be saved.
-        train_ratio:    Fraction of subjects for training (default 0.70).
-        val_ratio:      Fraction of subjects for validation (default 0.15).
-        random_state:   RNG seed for reproducibility.
-
-    Returns:
-        Full metadata DataFrame with 'split' column assigned.
+    Scan files with cross-platform filesystem case safety, apply dynamic split-scaling ratios, 
+    and output clean validation subsets.
     """
     root = Path(socofing_root)
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
-    records = []
-    for img_path in root.rglob("*.BMP"):
-        meta = parse_filename(img_path.name)
-        if meta["subject_id"] is None:
-            continue
-        meta["full_path"] = str(img_path)
-        records.append(meta)
+    # Cross-platform case safety: Collect paths uniquely via a set
+    all_files = set(root.rglob("*"))
+    img_paths = [f for f in all_files if f.suffix.lower() in [".bmp"]]
 
-    # Also catch lowercase .bmp files
-    for img_path in root.rglob("*.bmp"):
+    records = []
+    for img_path in img_paths:
         meta = parse_filename(img_path.name)
         if meta["subject_id"] is None:
             continue
-        key = str(img_path).lower()
         meta["full_path"] = str(img_path)
         records.append(meta)
 
@@ -128,19 +97,24 @@ def create_subject_wise_split(
     df = df.dropna(subset=["subject_id"])
     df["subject_id"] = df["subject_id"].astype(int)
 
-    # ── Subject-wise split (no subject leakage) ────────────────────────────
     unique_subjects = df["subject_id"].unique()
 
-    # 70% train  |  30% temp
+    # Dynamic target computation for split parameters
+    total_remainder_ratio = 1.0 - train_ratio
+    # Calculate what fraction val_ratio is of the remainder pool
+    val_allocation_ratio = val_ratio / total_remainder_ratio
+
+    # Step 1: Split train out from the tracking array
     train_subj, temp_subj = train_test_split(
         unique_subjects,
-        test_size=(1 - train_ratio),
+        test_size=total_remainder_ratio,
         random_state=random_state,
     )
-    # 50% of temp → val, 50% → test  (= 15% / 15% of total)
+    
+    # Step 2: Dynamically calculate internal test vs validation weights
     val_subj, test_subj = train_test_split(
         temp_subj,
-        test_size=0.5,
+        test_size=(1.0 - val_allocation_ratio),
         random_state=random_state,
     )
 
@@ -156,7 +130,7 @@ def create_subject_wise_split(
     print(f"  Total subjects : {len(unique_subjects)}")
     print(f"  Train subjects : {len(train_subj)} ({train_ratio*100:.0f}%)")
     print(f"  Val   subjects : {len(val_subj)} ({val_ratio*100:.0f}%)")
-    print(f"  Test  subjects : {len(test_subj)} ({val_ratio*100:.0f}%)")
+    print(f"  Test  subjects : {len(test_subj)} ({(1.0 - train_ratio - val_ratio)*100:.0f}%)")
     print(f"  Metadata saved : {metadata_path}")
     print("\n  Image counts per split:")
     print(df["split"].value_counts().to_string())
